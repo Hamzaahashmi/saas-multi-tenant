@@ -1,0 +1,83 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\ServiceProvider;
+use Stancl\JobPipeline\JobPipeline;
+use Stancl\Tenancy\Events;
+use Stancl\Tenancy\Jobs;
+use Stancl\Tenancy\Listeners;
+
+class TenancyServiceProvider extends ServiceProvider
+{
+    public function events(): array
+    {
+        return [
+            Events\CreatingTenant::class => [],
+
+            Events\TenantCreated::class => [
+                JobPipeline::make([
+                    Jobs\CreateDatabase::class,
+                    Jobs\MigrateDatabase::class,
+                    // Jobs\SeedDatabase::class, // uncomment to auto-seed each tenant
+                ])->send(fn(Events\TenantCreated $event) => $event->tenant)
+                  ->shouldBeQueued(false),
+            ],
+
+            Events\TenantDeleted::class => [
+                JobPipeline::make([
+                    Jobs\DeleteDatabase::class,
+                ])->send(fn(Events\TenantDeleted $event) => $event->tenant)
+                  ->shouldBeQueued(false),
+            ],
+
+            Events\TenantSaved::class    => [],
+            Events\TenantUpdated::class  => [],
+            Events\DeletingTenant::class => [],
+
+            // Domain events
+            Events\CreatingDomain::class => [],
+            Events\DomainCreated::class  => [],
+            Events\DomainSaved::class    => [],
+            Events\DomainUpdated::class  => [],
+            Events\DomainDeleted::class  => [],
+
+            // Database events
+            Events\DatabaseCreated::class  => [],
+            Events\DatabaseMigrated::class => [],
+            Events\DatabaseSeeded::class   => [],
+            Events\DatabaseDeleted::class  => [],
+
+            // Tenancy lifecycle
+            Events\TenancyInitialized::class => [
+                Listeners\BootstrapTenancy::class,
+            ],
+
+            Events\TenancyEnded::class => [
+                Listeners\RevertToCentralContext::class,
+            ],
+
+            Events\BootstrappingTenancy::class     => [],
+            Events\TenancyBootstrapped::class      => [],
+            Events\RevertingToCentralContext::class => [],
+            Events\RevertedToCentralContext::class  => [],
+        ];
+    }
+
+    public function register(): void {}
+
+    public function boot(): void
+    {
+        foreach ($this->events() as $event => $listeners) {
+            foreach ($listeners as $listener) {
+                if ($listener instanceof JobPipeline) {
+                    $listener = $listener->toListener();
+                }
+                Event::listen($event, $listener);
+            }
+        }
+    }
+}
